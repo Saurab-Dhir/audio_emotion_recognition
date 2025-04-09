@@ -1,0 +1,63 @@
+paths:
+  raw_data: "./data/raw/"
+  processed_data: "./data/processed/"
+  features: "./data/features/"
+  models: "./models/"
+  results: "./results/"
+
+dataset:
+  cremad:
+    path: "./data/raw/cremad/"
+    sample_rate: 16000
+    emotions:
+      "ANG": "angry"
+      "DIS": "disgust"
+      "FEA": "fear"
+      "HAP": "happy"
+      "NEU": "neutral"
+      "SAD": "sad"
+    intensity:
+      "LO": "low"
+      "MD": "medium"
+      "HI": "high"
+      "XX": "unspecified"
+
+preprocessing:
+  normalize: true
+  noise_reduction: true
+  segment_length_ms: 3000
+  hop_length_ms: 1000
+
+features:
+  mfcc:
+    n_mfcc: 13
+    include_delta: true
+    include_delta_delta: true
+  prosodic:
+    extract_pitch: true
+    extract_energy: true
+    extract_zero_crossing_rate: true
+  spectral:
+    extract_spectral_centroid: true
+    extract_spectral_rolloff: true
+    extract_spectral_flux: true
+    extract_spectral_bandwidth: true
+
+model:
+  random_state: 42
+  test_size: 0.2
+  validation_size: 0.2
+  models_to_train:
+    - "svm"
+    - "random_forest"
+    - "xgboost"
+  hyperparameter_tuning:
+    perform: true
+    cv_folds: 5
+
+evaluation:
+  metrics:
+    - "accuracy"
+    - "precision"
+    - "recall"
+    - "f1"
