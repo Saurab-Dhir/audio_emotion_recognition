@@ -18,6 +18,12 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 from sklearn.feature_selection import SelectKBest, f_classif
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import RFE
+import numpy as np
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import StandardScaler
+import glob
+import librosa
 
 from src.utils import load_config, create_directories
 from src.cremad_loader import CREMADDataLoader
@@ -369,20 +375,20 @@ def develop_models(feature_path=None, model_output_dir=None, use_feature_selecti
     # Train models
     models = {}
     
-    # Train SVM model
-    logger.info("Training SVM model...")
-    svm_model = trainer.train_svm(X_train, y_train, tune_hyperparams=tune_hyperparams)
-    models['svm'] = svm_model
+    # Get GPU usage setting from config
+    use_gpu = config['model'].get('device', 'cuda').lower() == 'cuda' and config['model'].get('gpu', {}).get('use_gpu', True)
+    logger.info(f"GPU acceleration: {'Enabled' if use_gpu else 'Disabled'}")
     
     # Train Random Forest model
     logger.info("Training Random Forest model...")
-    rf_model = trainer.train_random_forest(X_train, y_train, tune_hyperparams=tune_hyperparams)
-    models['random_forest'] = rf_model
+    rf_model = trainer.train_random_forest(X_train, y_train, X_val, y_val, tune_hyperparams=tune_hyperparams)
+    models['random_forest'] = rf_model[0] if isinstance(rf_model, tuple) else rf_model
     
-    # Train XGBoost model
+    # Train XGBoost model with GPU if available
     logger.info("Training XGBoost model...")
-    xgb_model = trainer.train_xgboost(X_train, y_train, tune_hyperparams=tune_hyperparams)
-    models['xgboost'] = xgb_model
+    trainer.use_gpu = use_gpu  # Set the use_gpu flag on the trainer object
+    xgb_model = trainer.train_xgboost(X_train, y_train, X_val, y_val, tune_hyperparams=tune_hyperparams)
+    models['xgboost'] = xgb_model[0] if isinstance(xgb_model, tuple) else xgb_model
     
     # Evaluate models on validation set
     val_results = {}
@@ -462,38 +468,636 @@ def develop_models(feature_path=None, model_output_dir=None, use_feature_selecti
     
     return best_model_name, val_results, test_accuracy
 
+def cross_validate_models(feature_path=None, n_folds=5, output_dir=None, use_feature_selection=True):
+    """
+    Perform cross-validation to evaluate model performance
+    
+    Args:
+        feature_path (str, optional): Path to feature dataset
+        n_folds (int): Number of cross-validation folds
+        output_dir (str, optional): Directory to save results
+        use_feature_selection (bool): Whether to use feature selection
+    """
+    logger.info(f"Starting {n_folds}-fold cross-validation...")
+    
+    # Load configuration
+    config = load_config()
+    
+    # Set default paths if not provided
+    if feature_path is None:
+        feature_path = os.path.join(config['paths']['features'], 'cremad_features.pkl')
+    
+    if output_dir is None:
+        output_dir = config['paths']['results']
+    
+    # Initialize model trainer
+    from src.models import EmotionModelTrainer
+    trainer = EmotionModelTrainer()
+    
+    # Load feature dataset
+    feature_df = trainer.load_feature_dataset(feature_path)
+    
+    # Extract features and target
+    target_col = 'emotion'
+    X = np.vstack(feature_df['feature_vector'].values)
+    y = feature_df[target_col].values
+    
+    # Encode target labels
+    label_encoder = LabelEncoder()
+    y_encoded = label_encoder.fit_transform(y)
+    
+    # Initialize StratifiedKFold
+    kfold = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=config['model'].get('random_state', 42))
+    
+    # Initialize results dictionaries
+    cv_results = {
+        'random_forest': {'accuracy': [], 'precision': [], 'recall': [], 'f1': []},
+        'xgboost': {'accuracy': [], 'precision': [], 'recall': [], 'f1': []}
+    }
+    
+    # Perform cross-validation
+    fold_idx = 1
+    scaler = StandardScaler()
+    
+    for train_idx, test_idx in kfold.split(X, y_encoded):
+        logger.info(f"Processing fold {fold_idx}/{n_folds}...")
+        
+        # Split data into train and test sets
+        X_train, X_test = X[train_idx], X[test_idx]
+        y_train, y_test = y_encoded[train_idx], y_encoded[test_idx]
+        
+        # Scale features
+        X_train = scaler.fit_transform(X_train)
+        X_test = scaler.transform(X_test)
+        
+        # Apply feature selection if requested
+        if use_feature_selection:
+            feature_selection_method = config['model'].get('feature_selection', {}).get('method', 'selectk')
+            k_features = config['model'].get('feature_selection', {}).get('k_features', 100)
+            
+            if feature_selection_method == 'selectk':
+                selector = SelectKBest(f_classif, k=k_features)
+                X_train = selector.fit_transform(X_train, y_train)
+                X_test = selector.transform(X_test)
+            elif feature_selection_method == 'rfe':
+                estimator = RandomForestClassifier(n_estimators=100, random_state=42)
+                selector = RFE(estimator, n_features_to_select=k_features, step=0.1)
+                X_train = selector.fit_transform(X_train, y_train)
+                X_test = selector.transform(X_test)
+        
+        # Get GPU usage setting from config
+        use_gpu = config['model'].get('device', 'cuda').lower() == 'cuda' and config['model'].get('gpu', {}).get('use_gpu', True)
+        
+        # Split training data to create a validation set for model training
+        X_train_split, X_val, y_train_split, y_val = train_test_split(
+            X_train, y_train, test_size=0.2, random_state=config['model'].get('random_state', 42), stratify=y_train
+        )
+        
+        # Random Forest
+        rf_model = trainer.train_random_forest(X_train_split, y_train_split, X_val, y_val, tune_hyperparams=False)
+        y_pred = rf_model[0].predict(X_test) if isinstance(rf_model, tuple) else rf_model.predict(X_test)
+        
+        cv_results['random_forest']['accuracy'].append(accuracy_score(y_test, y_pred))
+        cv_results['random_forest']['precision'].append(precision_score(y_test, y_pred, average='weighted'))
+        cv_results['random_forest']['recall'].append(recall_score(y_test, y_pred, average='weighted'))
+        cv_results['random_forest']['f1'].append(f1_score(y_test, y_pred, average='weighted'))
+        
+        # XGBoost with GPU if available
+        trainer.use_gpu = use_gpu  # Set the use_gpu flag on the trainer object
+        xgb_model = trainer.train_xgboost(X_train_split, y_train_split, X_val, y_val, tune_hyperparams=False)
+        y_pred = xgb_model[0].predict(X_test) if isinstance(xgb_model, tuple) else xgb_model.predict(X_test)
+        
+        cv_results['xgboost']['accuracy'].append(accuracy_score(y_test, y_pred))
+        cv_results['xgboost']['precision'].append(precision_score(y_test, y_pred, average='weighted'))
+        cv_results['xgboost']['recall'].append(recall_score(y_test, y_pred, average='weighted'))
+        cv_results['xgboost']['f1'].append(f1_score(y_test, y_pred, average='weighted'))
+        
+        fold_idx += 1
+    
+    # Calculate mean and std of metrics
+    results_summary = {}
+    for model_name, metrics in cv_results.items():
+        results_summary[model_name] = {}
+        for metric_name, values in metrics.items():
+            mean_value = np.mean(values)
+            std_value = np.std(values)
+            results_summary[model_name][f'{metric_name}_mean'] = mean_value
+            results_summary[model_name][f'{metric_name}_std'] = std_value
+            logger.info(f"{model_name.upper()} {metric_name}: {mean_value:.4f} ± {std_value:.4f}")
+    
+    # Create boxplot of accuracies
+    plt.figure(figsize=(10, 6))
+    accuracies = [cv_results['random_forest']['accuracy'], 
+                 cv_results['xgboost']['accuracy']]
+    
+    plt.boxplot(accuracies, labels=['Random Forest', 'XGBoost'])
+    plt.title('Cross-Validation Accuracy Comparison')
+    plt.ylabel('Accuracy')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    
+    boxplot_path = os.path.join(output_dir, 'cv_accuracy_comparison.png')
+    plt.savefig(boxplot_path)
+    plt.close()
+    logger.info(f"Saved accuracy comparison plot to {boxplot_path}")
+    
+    # Save results as CSV
+    results_df = pd.DataFrame(results_summary).T
+    results_df.index.name = 'model'
+    
+    csv_path = os.path.join(output_dir, 'cross_validation_results.csv')
+    results_df.to_csv(csv_path)
+    logger.info(f"Saved cross-validation results to {csv_path}")
+    
+    # Determine best model
+    best_model = max(results_summary, key=lambda x: results_summary[x]['accuracy_mean'])
+    logger.info(f"Best model based on cross-validation: {best_model.upper()} "
+               f"with accuracy {results_summary[best_model]['accuracy_mean']:.4f} "
+               f"± {results_summary[best_model]['accuracy_std']:.4f}")
+    
+    return best_model, results_summary
+
+def predict_emotion(audio_file=None, model_path=None, config_path="config.yaml"):
+    """
+    Predict emotion for an audio file
+    
+    Args:
+        audio_file (str): Path to audio file
+        model_path (str): Path to model file
+        config_path (str): Path to configuration file
+    
+    Returns:
+        str: Predicted emotion
+    """
+    # Load configuration
+    config = load_config(config_path)
+    
+    # Set default paths if not provided
+    if model_path is None:
+        model_path = os.path.join(config['paths']['models'], 'prediction_pipeline.pkl')
+    
+    if audio_file is None:
+        logger.error("No audio file provided")
+        return None
+    
+    logger.info(f"Predicting emotion for audio file: {audio_file}")
+    
+    # Load model pipeline
+    logger.info(f"Loading model pipeline from {model_path}")
+    try:
+        with open(model_path, 'rb') as f:
+            pipeline = pickle.load(f)
+    except (FileNotFoundError, pickle.PickleError) as e:
+        logger.error(f"Error loading model: {e}")
+        logger.error("Please train a model first with --develop-models or --train")
+        return None
+    
+    # Load audio file
+    logger.info(f"Loading audio file {audio_file}")
+    try:
+        y, sr = librosa.load(audio_file, sr=None)
+    except Exception as e:
+        logger.error(f"Error loading audio: {e}")
+        return None
+    
+    # Preprocess audio
+    logger.info("Preprocessing audio...")
+    from src.preprocessing import AudioPreprocessor
+    preprocessor = AudioPreprocessor(config_path=config_path)
+    y_processed = preprocessor.preprocess_audio(y, sr)
+    
+    # Extract features
+    logger.info("Extracting features...")
+    from src.features import FeatureExtractor
+    feature_extractor = FeatureExtractor(config_path=config_path)
+    feature_vector = feature_extractor.extract_features_from_segment(y_processed, sr)
+    
+    # Reshape feature vector to 2D if needed
+    if len(feature_vector.shape) == 1:
+        feature_vector = feature_vector.reshape(1, -1)
+    elif len(feature_vector.shape) > 2:
+        feature_vector = feature_vector.reshape(1, -1)
+    
+    logger.info(f"Original feature vector shape: {feature_vector.shape}")
+        
+    # First apply scaling (StandardScaler)
+    scaled_features = pipeline['scaler'].transform(feature_vector)
+    logger.info(f"Scaled feature vector shape: {scaled_features.shape}")
+    
+    # Then apply feature selection if present
+    if 'selected_features' in pipeline and pipeline['selected_features'] is not None:
+        try:
+            # Select features after scaling
+            selected_indices = pipeline['selected_features']
+            selected_features = scaled_features[:, selected_indices]
+            logger.info(f"Feature selection applied: {len(selected_indices)} features selected")
+            logger.info(f"Selected features shape: {selected_features.shape}")
+            # Use selected features for prediction
+            X = selected_features
+        except Exception as e:
+            logger.error(f"Error applying feature selection: {e}")
+            raise
+    else:
+        # No feature selection - use all scaled features
+        logger.info("No feature selection applied")
+        X = scaled_features
+    
+    # Predict
+    model = pipeline['model']
+    y_pred = model.predict(X)
+    
+    # Convert prediction to emotion label
+    emotion = pipeline['label_encoder'].inverse_transform(y_pred)[0]
+    
+    logger.info(f"Predicted emotion: {emotion}")
+    
+    # Get prediction probabilities if available
+    try:
+        proba = model.predict_proba(X)[0]
+        classes = pipeline['label_encoder'].classes_
+        
+        # Print probabilities for each class
+        logger.info("Prediction probabilities:")
+        for emotion_class, prob in sorted(zip(classes, proba), key=lambda x: x[1], reverse=True):
+            logger.info(f"{emotion_class}: {prob:.4f}")
+    except:
+        logger.warning("Prediction probabilities not available")
+    
+    return emotion
+
+def batch_predict(audio_dir=None, model_path=None, output_file=None):
+    """
+    Predict emotions for a batch of audio files
+    
+    Args:
+        audio_dir (str): Directory containing audio files
+        model_path (str): Path to model file
+        output_file (str): Path to output file
+    """
+    # Load configuration
+    config = load_config()
+    
+    # Set default paths if not provided
+    if audio_dir is None:
+        audio_dir = config['paths'].get('audio_dir', 'data/audio')
+    
+    if model_path is None:
+        model_path = os.path.join(config['paths']['models'], 'prediction_pipeline.pkl')
+    
+    if output_file is None:
+        output_file = os.path.join(config['paths']['results'], 'batch_predictions.csv')
+    
+    logger.info(f"Batch predicting emotions for audio files in {audio_dir}")
+    
+    # Check if directory exists
+    if not os.path.exists(audio_dir):
+        logger.error(f"Directory not found: {audio_dir}")
+        return
+    
+    # Load model pipeline
+    logger.info(f"Loading model pipeline from {model_path}")
+    try:
+        with open(model_path, 'rb') as f:
+            pipeline = pickle.load(f)
+    except Exception as e:
+        logger.error(f"Error loading model pipeline: {e}")
+        return
+    
+    # Initialize components
+    preprocessor = AudioPreprocessor()
+    feature_extractor = FeatureExtractor()
+    
+    # Get audio files
+    audio_files = []
+    for ext in ['wav', 'mp3', 'ogg', 'flac']:
+        audio_files.extend(glob.glob(os.path.join(audio_dir, f'*.{ext}')))
+    
+    logger.info(f"Found {len(audio_files)} audio files")
+    
+    # Initialize results
+    results = []
+    
+    # Process each file
+    for audio_file in tqdm(audio_files, desc="Processing audio files"):
+        try:
+            # Load audio
+            y, sr = librosa.load(audio_file, sr=None)
+            
+            # Preprocess audio
+            y_processed = preprocessor.preprocess_audio(y, sr)
+            
+            # Extract features
+            feature_vector = feature_extractor.extract_features_from_segment(y_processed, sr)
+            
+            # Reshape feature vector to 2D if needed
+            if len(feature_vector.shape) == 1:
+                feature_vector = feature_vector.reshape(1, -1)
+            elif len(feature_vector.shape) > 2:
+                feature_vector = feature_vector.reshape(1, -1)
+            
+            # First apply scaling (StandardScaler)
+            scaled_features = pipeline['scaler'].transform(feature_vector)
+            
+            # Then apply feature selection if present
+            if 'selected_features' in pipeline and pipeline['selected_features'] is not None:
+                try:
+                    # Select features after scaling
+                    selected_indices = pipeline['selected_features']
+                    selected_features = scaled_features[:, selected_indices]
+                    # Use selected features for prediction
+                    X = selected_features
+                except Exception as e:
+                    logger.error(f"Error applying feature selection: {e}")
+                    raise
+            else:
+                # No feature selection - use all scaled features
+                X = scaled_features
+            
+            # Predict
+            y_pred = pipeline['model'].predict(X)
+            emotion = pipeline['label_encoder'].inverse_transform(y_pred)[0]
+            
+            # Get probabilities if available
+            confidence = 0.0
+            if hasattr(pipeline['model'], 'predict_proba'):
+                probas = pipeline['model'].predict_proba(X)[0]
+                confidence = probas[y_pred[0]]
+            
+            # Add to results
+            filename = os.path.basename(audio_file)
+            results.append({
+                'filename': filename,
+                'emotion': emotion,
+                'confidence': confidence
+            })
+            
+        except Exception as e:
+            logger.error(f"Error processing {audio_file}: {e}")
+            # Add error to results
+            filename = os.path.basename(audio_file)
+            results.append({
+                'filename': filename,
+                'emotion': 'ERROR',
+                'confidence': 0.0,
+                'error': str(e)
+            })
+    
+    # Save results to CSV
+    results_df = pd.DataFrame(results)
+    results_df.to_csv(output_file, index=False)
+    logger.info(f"Saved batch prediction results to {output_file}")
+    
+    # Print summary
+    emotion_counts = results_df['emotion'].value_counts()
+    logger.info("Emotion distribution in predictions:")
+    for emotion, count in emotion_counts.items():
+        logger.info(f"{emotion}: {count} ({count/len(results_df)*100:.1f}%)")
+    
+    return results_df
+
+def check_gpu_capabilities():
+    """
+    Check GPU capabilities for machine learning
+    """
+    logger.info("Checking GPU capabilities for machine learning...")
+    
+    try:
+        import torch
+        logger.info(f"PyTorch version: {torch.__version__}")
+        logger.info(f"CUDA available: {torch.cuda.is_available()}")
+        if torch.cuda.is_available():
+            logger.info(f"CUDA version: {torch.version.cuda}")
+            logger.info(f"GPU device: {torch.cuda.get_device_name(0)}")
+            logger.info(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+    except ImportError:
+        logger.warning("PyTorch not installed")
+    
+    try:
+        import cupy
+        logger.info(f"CuPy installed (needed for XGBoost GPU acceleration)")
+        logger.info(f"CUDA version detected by CuPy: {cupy.cuda.runtime.runtimeGetVersion()}")
+    except ImportError:
+        logger.warning("CuPy not installed - XGBoost will use CPU")
+    
+    try:
+        from cuml.ensemble import RandomForestClassifier
+        logger.info("RAPIDS cuML installed (needed for RandomForest GPU acceleration)")
+    except ImportError:
+        logger.warning("RAPIDS cuML not installed - RandomForest will use CPU")
+        logger.warning("Note: RAPIDS cuML is not officially supported on Windows")
+        logger.warning("Consider using WSL2 or Docker for GPU acceleration with RAPIDS")
+    
+    try:
+        import xgboost as xgb
+        logger.info(f"XGBoost version: {xgb.__version__}")
+        
+        # Check if XGBoost was built with GPU support
+        build_info = xgb.build_info()
+        if 'USE_CUDA' in build_info and build_info['USE_CUDA'] == '1':
+            logger.info("XGBoost was built with CUDA support")
+        else:
+            logger.warning("XGBoost was NOT built with CUDA support")
+            
+        logger.info(f"XGBoost build info: {build_info}")
+    except (ImportError, Exception) as e:
+        logger.warning(f"Error checking XGBoost: {e}")
+    
+    logger.info("\nFor XGBoost GPU acceleration on Windows:")
+    logger.info("1. Install CUDA toolkit from NVIDIA website")
+    logger.info("2. Install CuPy: pip install cupy-cuda11x (replace 11x with your CUDA version)")
+    logger.info("\nFor RandomForest GPU acceleration (RAPIDS):")
+    logger.info("This requires Linux or WSL2. For Windows, install WSL2 and then:")
+    logger.info("1. conda create -n rapids-23.10 -c rapidsai -c conda-forge -c nvidia rapids=23.10 python=3.10 cuda-version=11.8")
+    logger.info("2. Run your code inside the WSL2 environment")
+
+def analyze_predictions(predictions_file=None, output_dir=None):
+    """
+    Analyze prediction results and create a confusion matrix
+    
+    Args:
+        predictions_file (str): Path to predictions CSV file
+        output_dir (str): Directory to save analysis results
+    """
+    # Load configuration
+    config = load_config()
+    
+    # Set default paths if not provided
+    if predictions_file is None:
+        predictions_file = os.path.join(config['paths']['results'], 'batch_predictions.csv')
+    
+    if output_dir is None:
+        output_dir = os.path.join(config['paths']['results'], 'analysis')
+    
+    os.makedirs(output_dir, exist_ok=True)
+    
+    logger.info(f"Analyzing prediction results from {predictions_file}")
+    
+    # Load predictions
+    try:
+        predictions_df = pd.read_csv(predictions_file)
+    except Exception as e:
+        logger.error(f"Error loading predictions file: {e}")
+        return
+    
+    logger.info(f"Loaded {len(predictions_df)} predictions")
+    
+    # Extract true emotions from filenames
+    # CREMA-D files are named like: 1001_IEO_HAP_XX.wav where HAP is happy
+    emotion_map = {
+        'ANG': 'angry',
+        'DIS': 'disgust',
+        'FEA': 'fear',
+        'HAP': 'happy', 
+        'NEU': 'neutral',
+        'SAD': 'sad'
+    }
+    
+    # Extract true emotions from filenames
+    true_emotions = []
+    for filename in predictions_df['filename']:
+        parts = filename.split('_')
+        if len(parts) >= 3:
+            # Extract the emotion code
+            emotion_code = parts[2]
+            # Map to full emotion name
+            true_emotion = emotion_map.get(emotion_code, 'unknown')
+            true_emotions.append(true_emotion)
+        else:
+            # Handle filenames that don't match expected format
+            true_emotions.append('unknown')
+    
+    # Add true emotions to dataframe
+    predictions_df['true_emotion'] = true_emotions
+    
+    # Create a confusion matrix
+    from sklearn.metrics import confusion_matrix, classification_report
+    
+    # Filter out unknowns or rows with errors
+    valid_df = predictions_df[predictions_df['true_emotion'] != 'unknown']
+    
+    # Generate confusion matrix
+    cm = confusion_matrix(
+        valid_df['true_emotion'], 
+        valid_df['emotion'],
+        labels=list(emotion_map.values())
+    )
+    
+    # Plot the confusion matrix
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+               xticklabels=list(emotion_map.values()),
+               yticklabels=list(emotion_map.values()))
+    plt.title('Confusion Matrix')
+    plt.ylabel('True Emotion')
+    plt.xlabel('Predicted Emotion')
+    plt.tight_layout()
+    
+    # Save the confusion matrix
+    cm_path = os.path.join(output_dir, 'confusion_matrix.png')
+    plt.savefig(cm_path)
+    logger.info(f"Saved confusion matrix to {cm_path}")
+    
+    # Create and save the classification report
+    report = classification_report(
+        valid_df['true_emotion'], 
+        valid_df['emotion'],
+        labels=list(emotion_map.values()),
+        output_dict=True
+    )
+    
+    # Convert to DataFrame for easier viewing
+    report_df = pd.DataFrame(report).transpose()
+    report_path = os.path.join(output_dir, 'classification_report.csv')
+    report_df.to_csv(report_path)
+    logger.info(f"Saved classification report to {report_path}")
+    
+    # Calculate accuracy per emotion
+    accuracy_per_emotion = {}
+    for emotion in emotion_map.values():
+        emotion_df = valid_df[valid_df['true_emotion'] == emotion]
+        if len(emotion_df) > 0:
+            accuracy = (emotion_df['emotion'] == emotion_df['true_emotion']).mean()
+            accuracy_per_emotion[emotion] = accuracy
+    
+    # Display overall accuracy
+    overall_accuracy = (valid_df['emotion'] == valid_df['true_emotion']).mean()
+    logger.info(f"Overall accuracy: {overall_accuracy:.4f}")
+    
+    # Display accuracy per emotion
+    logger.info("Accuracy per emotion:")
+    for emotion, accuracy in accuracy_per_emotion.items():
+        logger.info(f"{emotion}: {accuracy:.4f}")
+    
+    # Find most common misclassifications
+    misclassified = valid_df[valid_df['emotion'] != valid_df['true_emotion']]
+    misclass_counts = misclassified.groupby(['true_emotion', 'emotion']).size().reset_index(name='count')
+    misclass_counts = misclass_counts.sort_values('count', ascending=False)
+    
+    logger.info("Top misclassifications:")
+    for _, row in misclass_counts.head(10).iterrows():
+        logger.info(f"{row['true_emotion']} → {row['emotion']}: {row['count']} instances")
+    
+    return valid_df
+
 def main():
     """
     Main function to run the emotion recognition system
     """
     parser = argparse.ArgumentParser(description="Audio-Based Emotion Recognition System")
     parser.add_argument("--check-env", action="store_true", help="Check environment setup")
+    parser.add_argument("--check-gpu", action="store_true", help="Check GPU capabilities")
     parser.add_argument("--test-loader", action="store_true", help="Test CREMA-D data loader")
     parser.add_argument("--verify-structure", action="store_true", help="Verify project structure")
     parser.add_argument("--process", action="store_true", help="Process dataset through entire pipeline")
     parser.add_argument("--train", action="store_true", help="Train models on processed features")
     parser.add_argument("--evaluate", action="store_true", help="Evaluate trained model")
     parser.add_argument("--develop-models", action="store_true", help="Develop and evaluate ML models")
-    parser.add_argument("--limit", type=int, help="Limit number of samples to process")
+    parser.add_argument("--cross-validate", action="store_true", help="Perform cross-validation")
+    parser.add_argument("--predict", action="store_true", help="Predict emotion from audio file")
+    parser.add_argument("--batch-predict", action="store_true", help="Batch predict emotions from audio directory")
+    parser.add_argument("--analyze", action="store_true", help="Analyze prediction results and create confusion matrix")
+    parser.add_argument("--limit", type=int, help="Limit number of files to process")
     parser.add_argument("--output", type=str, help="Output path for processed features")
     parser.add_argument("--feature-path", type=str, help="Path to feature dataset for training/evaluation")
     parser.add_argument("--model-path", type=str, help="Path to save/load model")
     parser.add_argument("--model-dir", type=str, help="Directory to save multiple models")
+    parser.add_argument("--result-dir", type=str, help="Directory to save results")
+    parser.add_argument("--audio-file", type=str, help="Path to audio file for prediction")
+    parser.add_argument("--audio-dir", type=str, help="Directory containing audio files for batch prediction")
     parser.add_argument("--cpu", action="store_true", help="Force CPU usage (default: use GPU if available)")
     parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
     parser.add_argument("--no-feature-selection", action="store_true", help="Disable feature selection")
     parser.add_argument("--no-hyperparameter-tuning", action="store_true", help="Disable hyperparameter tuning")
+    parser.add_argument("--n-folds", type=int, default=5, help="Number of cross-validation folds")
     
     args = parser.parse_args()
     
     # Load configuration
     config = load_config()
     
+    # Update GPU usage in config based on command line arguments
+    if 'model' not in config:
+        config['model'] = {}
+    if 'gpu' not in config['model']:
+        config['model']['gpu'] = {}
+    
+    # If --cpu flag is set, disable GPU
+    if args.cpu:
+        config['model']['device'] = 'cpu'
+        config['model']['gpu']['use_gpu'] = False
+        logger.info("GPU acceleration disabled: using CPU only")
+    else:
+        config['model']['device'] = 'cuda'
+        config['model']['gpu']['use_gpu'] = True
+        logger.info("GPU acceleration enabled")
+    
     # Create necessary directories
     create_directories(config)
     
     if args.check_env:
         check_environment()
+        
+    if args.check_gpu:
+        check_gpu_capabilities()
         
     if args.test_loader:
         test_cremad_loader(config, limit=args.limit or 5)
@@ -508,7 +1112,7 @@ def main():
         train_models(
             feature_path=args.feature_path,
             model_output=args.model_path,
-            use_gpu=not args.cpu,
+            use_gpu=config['model']['gpu']['use_gpu'],
             num_epochs=args.epochs
         )
         
@@ -525,10 +1129,51 @@ def main():
             use_feature_selection=not args.no_feature_selection,
             tune_hyperparams=not args.no_hyperparameter_tuning
         )
+        
+    if args.cross_validate:
+        cross_validate_models(
+            feature_path=args.feature_path,
+            n_folds=args.n_folds,
+            output_dir=args.result_dir,
+            use_feature_selection=not args.no_feature_selection
+        )
+        
+    if args.predict:
+        if not args.audio_file:
+            logger.error("Audio file must be provided with --audio-file")
+            return
+        
+        emotion = predict_emotion(
+            audio_file=args.audio_file,
+            model_path=args.model_path
+        )
+        
+        if emotion:
+            print(f"\nPredicted emotion: {emotion}\n")
+            
+    if args.batch_predict:
+        if not args.audio_dir:
+            logger.error("Audio directory must be provided with --audio-dir")
+            return
+        
+        batch_predict(
+            audio_dir=args.audio_dir,
+            model_path=args.model_path,
+            output_file=args.output
+        )
+    
+    if args.analyze:
+        analyze_predictions(
+            predictions_file=os.path.join(config['paths']['results'], 'batch_predictions.csv'),
+            output_dir=os.path.join(config['paths']['results'], 'analysis')
+        )
     
     # If no specific arguments, run basic verification
-    if not any([args.check_env, args.test_loader, args.verify_structure, args.process, args.train, args.evaluate, args.develop_models]):
+    if not any([args.check_env, args.check_gpu, args.test_loader, args.verify_structure, args.process, 
+                args.train, args.evaluate, args.develop_models, args.cross_validate,
+                args.predict, args.batch_predict, args.analyze]):
         check_environment()
+        check_gpu_capabilities()
         test_cremad_loader(config, limit=5)
         verify_project_structure()
     

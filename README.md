@@ -119,10 +119,11 @@ python main.py --evaluate --model-path models/emotion_model.pt
 The system provides comprehensive model development capabilities including:
 
 1. **Feature Selection**: Select the most relevant features using ANOVA F-value or Recursive Feature Elimination
-2. **Machine Learning Models**: Train and compare SVM, Random Forest, and XGBoost classifiers
-3. **Hyperparameter Optimization**: Find optimal hyperparameters for each model type
-4. **Model Evaluation**: Compare models using cross-validation and independent test set
-5. **Model Selection**: Automatically select the best performing model
+2. **Machine Learning Models**: Train and compare Random Forest and XGBoost classifiers
+3. **GPU Acceleration**: Use NVIDIA GPU acceleration for XGBoost models for faster training and inference
+4. **Hyperparameter Optimization**: Find optimal hyperparameters for each model type
+5. **Model Evaluation**: Compare models using cross-validation and independent test set
+6. **Model Selection**: Automatically select the best performing model
 
 To develop and compare traditional machine learning models:
 
@@ -132,6 +133,12 @@ python main.py --develop-models
 
 # Run with custom settings
 python main.py --develop-models --feature-path data/features/cremad_features.pkl --model-dir models/
+
+# Use GPU acceleration (default if GPU is available)
+python main.py --develop-models
+
+# Force CPU-only mode (no GPU)
+python main.py --develop-models --cpu
 
 # Disable feature selection or hyperparameter tuning for faster development
 python main.py --develop-models --no-feature-selection --no-hyperparameter-tuning
@@ -145,6 +152,50 @@ The model development process will:
 - Compare model performances
 - Select the best model
 - Save detailed results and visualizations
+
+### Cross-Validation
+
+To perform k-fold cross-validation and compare model performances:
+
+```bash
+# Run 5-fold cross-validation with default settings
+python main.py --cross-validate
+
+# Run with custom settings
+python main.py --cross-validate --n-folds 10 --feature-path data/features/cremad_features.pkl
+
+# Disable feature selection for faster cross-validation
+python main.py --cross-validate --no-feature-selection
+```
+
+The cross-validation process will:
+- Perform k-fold cross-validation for each model type
+- Calculate performance metrics for each fold
+- Generate summary statistics (mean and standard deviation)
+- Create visualizations comparing model performances
+- Save detailed results to the results directory
+
+### Emotion Prediction
+
+Once models are trained, you can use them to predict emotions from new audio files:
+
+```bash
+# Predict emotion for a single audio file
+python main.py --predict --audio-file path/to/audio.wav
+
+# Predict emotions for a batch of audio files in a directory
+python main.py --batch-predict --audio-dir path/to/audio/directory
+
+# Use a specific model for prediction
+python main.py --predict --audio-file path/to/audio.wav --model-path models/xgboost_model.pkl
+```
+
+The prediction pipeline:
+1. Loads the audio file(s)
+2. Applies the same preprocessing steps used during training
+3. Extracts the same feature set
+4. Uses the trained model to classify the emotion
+5. For batch prediction, saves results to a CSV file
 
 ## Results
 
