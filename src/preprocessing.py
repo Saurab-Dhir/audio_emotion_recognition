@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple, Optional, Union, Callable
 from scipy import signal
 from tqdm import tqdm
 
-from utils import load_config
+from .utils import load_config
 
 # Setup logging
 logging.basicConfig(

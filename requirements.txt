@@ -15,3 +15,7 @@ plotly>=5.3.0
 PyYAML>=6.0
 pytest>=6.2.5
 flake8>=4.0.0
+cupy-cuda  # Choose the version matching your CUDA (11.x)
+scikit-learn-intelex  # Intel extension for scikit-learn
+xgboost  # Make sure you have the latest version with GPU support
+torch

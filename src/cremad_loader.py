@@ -6,7 +6,7 @@ from typing import Dict, List, Tuple, Optional, Union
 from glob import glob
 from tqdm import tqdm
 
-from utils import load_config, load_audio
+from .utils import load_config, load_audio
 
 # Setup logging
 logging.basicConfig(

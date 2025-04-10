@@ -1,9 +1,9 @@
 paths:
-  raw_data: "./data/raw/"
-  processed_data: "./data/processed/"
-  features: "./data/features/"
-  models: "./models/"
-  results: "./results/"
+  raw_data: "../data/raw/"
+  processed_data: "../data/processed/"
+  features: "../data/features/"
+  models: "../models/"
+  results: "../results/"
 
 dataset:
   cremad:
