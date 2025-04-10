@@ -101,9 +101,60 @@ Run the complete pipeline:
 python main.py
 ```
 
+To run specific parts of the pipeline:
+
+```bash
+# Process the dataset and extract features
+python main.py --process
+
+# Train a neural network model with GPU acceleration 
+python main.py --train --feature-path data/features/cremad_features.pkl
+
+# Evaluate a trained model
+python main.py --evaluate --model-path models/emotion_model.pt
+```
+
+### Model Development
+
+The system provides comprehensive model development capabilities including:
+
+1. **Feature Selection**: Select the most relevant features using ANOVA F-value or Recursive Feature Elimination
+2. **Machine Learning Models**: Train and compare SVM, Random Forest, and XGBoost classifiers
+3. **Hyperparameter Optimization**: Find optimal hyperparameters for each model type
+4. **Model Evaluation**: Compare models using cross-validation and independent test set
+5. **Model Selection**: Automatically select the best performing model
+
+To develop and compare traditional machine learning models:
+
+```bash
+# Run the model development pipeline with default settings
+python main.py --develop-models
+
+# Run with custom settings
+python main.py --develop-models --feature-path data/features/cremad_features.pkl --model-dir models/
+
+# Disable feature selection or hyperparameter tuning for faster development
+python main.py --develop-models --no-feature-selection --no-hyperparameter-tuning
+```
+
+The model development process will:
+- Split data into train/validation/test sets
+- Apply feature selection (if enabled)
+- Train multiple model types
+- Optimize hyperparameters (if enabled)
+- Compare model performances
+- Select the best model
+- Save detailed results and visualizations
+
 ## Results
 
 The evaluation results including accuracy, precision, recall, F1-score, confusion matrices, and ROC curves will be saved in the `results/` directory.
+
+For model development results, check the `models/` directory for:
+- Trained model files (`.pkl`)
+- Classification reports (`.csv`)
+- Confusion matrix visualizations (`.png`)
+- Prediction pipeline for the best model
 
 ## License
 
