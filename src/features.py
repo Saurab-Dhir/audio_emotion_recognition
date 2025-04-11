@@ -372,6 +372,72 @@ class FeatureExtractor:
         logger.info(f"Loaded features from {input_path}")
         
         return feature_df
+    
+    def get_feature_names(self) -> List[str]:
+        """
+        Get names of all features
+        
+        Returns:
+            List[str]: List of feature names
+        """
+        feature_names = []
+        
+        # MFCC feature names
+        n_mfcc = self.feature_config['mfcc'].get('n_mfcc', 13)
+        include_delta = self.feature_config['mfcc'].get('include_delta', True)
+        include_delta_delta = self.feature_config['mfcc'].get('include_delta_delta', True)
+        
+        # Base MFCC
+        for i in range(n_mfcc):
+            feature_names.append(f'mfcc_{i}')
+        
+        # Delta MFCC
+        if include_delta:
+            for i in range(n_mfcc):
+                feature_names.append(f'mfcc_delta_{i}')
+        
+        # Delta-Delta MFCC
+        if include_delta_delta:
+            for i in range(n_mfcc):
+                feature_names.append(f'mfcc_delta2_{i}')
+        
+        # Prosodic feature names
+        if self.feature_config['prosodic'].get('extract_pitch', True):
+            feature_names.append('prosodic_pitch')
+        
+        if self.feature_config['prosodic'].get('extract_energy', True):
+            feature_names.append('prosodic_energy')
+        
+        if self.feature_config['prosodic'].get('extract_zero_crossing_rate', True):
+            feature_names.append('prosodic_zcr')
+        
+        # Spectral feature names
+        if self.feature_config['spectral'].get('extract_spectral_centroid', True):
+            feature_names.append('spectral_centroid')
+        
+        if self.feature_config['spectral'].get('extract_spectral_rolloff', True):
+            feature_names.append('spectral_rolloff')
+        
+        if self.feature_config['spectral'].get('extract_spectral_flux', True):
+            feature_names.append('spectral_flux')
+        
+        if self.feature_config['spectral'].get('extract_spectral_bandwidth', True):
+            feature_names.append('spectral_bandwidth')
+        
+        # Statistical features (means, stds, etc.)
+        stats_features = []
+        for feature in feature_names:
+            stats_features.extend([
+                f'{feature}_mean',
+                f'{feature}_std',
+                f'{feature}_min',
+                f'{feature}_max',
+                f'{feature}_median',
+                f'{feature}_skew',
+                f'{feature}_kurtosis'
+            ])
+        
+        return stats_features
 
 def main():
     """

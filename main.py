@@ -608,6 +608,12 @@ def cross_validate_models(feature_path=None, n_folds=5, output_dir=None, use_fea
     results_df.to_csv(csv_path)
     logger.info(f"Saved cross-validation results to {csv_path}")
     
+    # Save raw cross-validation results for statistical analysis
+    cv_results_path = os.path.join(output_dir, 'cv_results.pkl')
+    with open(cv_results_path, 'wb') as f:
+        pickle.dump(cv_results, f)
+    logger.info(f"Saved raw cross-validation results to {cv_results_path}")
+    
     # Determine best model
     best_model = max(results_summary, key=lambda x: results_summary[x]['accuracy_mean'])
     logger.info(f"Best model based on cross-validation: {best_model.upper()} "
@@ -1038,109 +1044,213 @@ def analyze_predictions(predictions_file=None, output_dir=None):
     
     return valid_df
 
-def main():
+def analyze_feature_importance(model_path=None, output_dir=None, top_n=20):
     """
-    Main function to run the emotion recognition system
+    Analyze feature importance from the trained model
+    
+    Args:
+        model_path (str): Path to the trained model pipeline
+        output_dir (str): Directory to save feature importance visualizations
+        top_n (int): Number of top features to visualize
     """
-    parser = argparse.ArgumentParser(description="Audio-Based Emotion Recognition System")
-    parser.add_argument("--check-env", action="store_true", help="Check environment setup")
-    parser.add_argument("--check-gpu", action="store_true", help="Check GPU capabilities")
-    parser.add_argument("--test-loader", action="store_true", help="Test CREMA-D data loader")
-    parser.add_argument("--verify-structure", action="store_true", help="Verify project structure")
-    parser.add_argument("--process", action="store_true", help="Process dataset through entire pipeline")
-    parser.add_argument("--train", action="store_true", help="Train models on processed features")
-    parser.add_argument("--evaluate", action="store_true", help="Evaluate trained model")
-    parser.add_argument("--develop-models", action="store_true", help="Develop and evaluate ML models")
-    parser.add_argument("--cross-validate", action="store_true", help="Perform cross-validation")
-    parser.add_argument("--predict", action="store_true", help="Predict emotion from audio file")
-    parser.add_argument("--batch-predict", action="store_true", help="Batch predict emotions from audio directory")
-    parser.add_argument("--analyze", action="store_true", help="Analyze prediction results and create confusion matrix")
-    parser.add_argument("--limit", type=int, help="Limit number of files to process")
-    parser.add_argument("--output", type=str, help="Output path for processed features")
-    parser.add_argument("--feature-path", type=str, help="Path to feature dataset for training/evaluation")
-    parser.add_argument("--model-path", type=str, help="Path to save/load model")
-    parser.add_argument("--model-dir", type=str, help="Directory to save multiple models")
-    parser.add_argument("--result-dir", type=str, help="Directory to save results")
-    parser.add_argument("--audio-file", type=str, help="Path to audio file for prediction")
-    parser.add_argument("--audio-dir", type=str, help="Directory containing audio files for batch prediction")
-    parser.add_argument("--cpu", action="store_true", help="Force CPU usage (default: use GPU if available)")
-    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
-    parser.add_argument("--no-feature-selection", action="store_true", help="Disable feature selection")
-    parser.add_argument("--no-hyperparameter-tuning", action="store_true", help="Disable hyperparameter tuning")
-    parser.add_argument("--n-folds", type=int, default=5, help="Number of cross-validation folds")
-    
-    args = parser.parse_args()
-    
     # Load configuration
     config = load_config()
     
-    # Update GPU usage in config based on command line arguments
-    if 'model' not in config:
-        config['model'] = {}
-    if 'gpu' not in config['model']:
-        config['model']['gpu'] = {}
+    # Set default paths if not provided
+    if model_path is None:
+        model_path = os.path.join(config['paths']['models'], 'prediction_pipeline.pkl')
     
-    # If --cpu flag is set, disable GPU
-    if args.cpu:
-        config['model']['device'] = 'cpu'
-        config['model']['gpu']['use_gpu'] = False
-        logger.info("GPU acceleration disabled: using CPU only")
+    if output_dir is None:
+        output_dir = os.path.join(config['paths']['results'], 'feature_importance')
+    
+    os.makedirs(output_dir, exist_ok=True)
+    
+    logger.info(f"Analyzing feature importance from model: {model_path}")
+    
+    # Load model pipeline
+    try:
+        with open(model_path, 'rb') as f:
+            pipeline = pickle.load(f)
+    except Exception as e:
+        logger.error(f"Error loading model pipeline: {e}")
+        return
+    
+    # Extract model and feature names
+    model = pipeline['model']
+    
+    # Create feature extractor to get feature names
+    feature_extractor = FeatureExtractor()
+    feature_names = feature_extractor.get_feature_names()
+    
+    # Check if we need to adjust feature names based on selected features
+    if 'selected_features' in pipeline and pipeline['selected_features'] is not None:
+        selected_indices = pipeline['selected_features']
+        selected_feature_names = [feature_names[i] for i in selected_indices]
     else:
-        config['model']['device'] = 'cuda'
-        config['model']['gpu']['use_gpu'] = True
-        logger.info("GPU acceleration enabled")
+        selected_feature_names = feature_names
     
-    # Create necessary directories
-    create_directories(config)
+    # Get feature importance based on model type
+    if hasattr(model, 'feature_importances_'):
+        # For tree-based models like RandomForest, XGBoost
+        importances = model.feature_importances_
+        feature_importance = pd.DataFrame({
+            'feature': selected_feature_names,
+            'importance': importances
+        })
+    elif hasattr(model, 'coef_'):
+        # For linear models like SVM, Logistic Regression
+        importances = np.abs(model.coef_[0])
+        feature_importance = pd.DataFrame({
+            'feature': selected_feature_names,
+            'importance': importances
+        })
+    else:
+        logger.warning(f"Model type {type(model)} doesn't support feature importance extraction")
+        return
     
+    # Sort by importance
+    feature_importance = feature_importance.sort_values('importance', ascending=False)
+    
+    # Get top N features
+    top_features = feature_importance.head(top_n)
+    
+    # Plot feature importance
+    plt.figure(figsize=(12, 8))
+    sns.barplot(x='importance', y='feature', data=top_features)
+    plt.title(f'Top {top_n} Features by Importance')
+    plt.tight_layout()
+    
+    # Save the plot
+    plot_path = os.path.join(output_dir, 'feature_importance.png')
+    plt.savefig(plot_path)
+    logger.info(f"Saved feature importance plot to {plot_path}")
+    
+    # Save the full feature importance data
+    csv_path = os.path.join(output_dir, 'feature_importance.csv')
+    feature_importance.to_csv(csv_path, index=False)
+    logger.info(f"Saved feature importance data to {csv_path}")
+    
+    # Group features by type and analyze
+    feature_types = {}
+    for feature in feature_importance['feature']:
+        if '_mfcc' in feature:
+            feature_type = 'MFCC'
+        elif '_chroma' in feature:
+            feature_type = 'Chroma'
+        elif '_contrast' in feature:
+            feature_type = 'Spectral Contrast'
+        elif '_centroid' in feature:
+            feature_type = 'Spectral Centroid'
+        elif '_bandwidth' in feature:
+            feature_type = 'Spectral Bandwidth'
+        elif '_rolloff' in feature:
+            feature_type = 'Spectral Rolloff'
+        elif '_zcr' in feature:
+            feature_type = 'Zero Crossing Rate'
+        elif '_energy' in feature:
+            feature_type = 'Energy'
+        elif '_rmse' in feature:
+            feature_type = 'RMSE'
+        else:
+            feature_type = 'Other'
+        
+        if feature_type not in feature_types:
+            feature_types[feature_type] = 0
+        feature_types[feature_type] += feature_importance.loc[feature_importance['feature'] == feature, 'importance'].iloc[0]
+    
+    # Convert to DataFrame for visualization
+    feature_type_importance = pd.DataFrame({
+        'feature_type': list(feature_types.keys()),
+        'importance': list(feature_types.values())
+    })
+    feature_type_importance = feature_type_importance.sort_values('importance', ascending=False)
+    
+    # Plot feature type importance
+    plt.figure(figsize=(10, 6))
+    sns.barplot(x='importance', y='feature_type', data=feature_type_importance)
+    plt.title('Feature Type Importance')
+    plt.tight_layout()
+    
+    # Save the plot
+    plot_path = os.path.join(output_dir, 'feature_type_importance.png')
+    plt.savefig(plot_path)
+    logger.info(f"Saved feature type importance plot to {plot_path}")
+    
+    # Return feature importance data
+    return feature_importance
+
+def main():
+    """Main function"""
+    parser = argparse.ArgumentParser(description='Audio Emotion Recognition System')
+    
+    parser.add_argument('--check-env', action='store_true', help='Check environment and dependencies')
+    parser.add_argument('--verify-structure', action='store_true', help='Verify project structure')
+    parser.add_argument('--process-dataset', action='store_true', help='Process audio dataset')
+    parser.add_argument('--train', action='store_true', help='Train models')
+    parser.add_argument('--evaluate', action='store_true', help='Evaluate models')
+    parser.add_argument('--develop-models', action='store_true', help='Develop and evaluate models')
+    parser.add_argument('--cross-validate', action='store_true', help='Cross-validate models')
+    parser.add_argument('--predict', action='store_true', help='Predict emotion for audio file')
+    parser.add_argument('--batch-predict', action='store_true', help='Batch predict emotions for audio files')
+    parser.add_argument('--check-gpu', action='store_true', help='Check GPU capabilities')
+    parser.add_argument('--analyze-predictions', action='store_true', help='Analyze prediction results')
+    parser.add_argument('--analyze-feature-importance', action='store_true', help='Analyze feature importance')
+    parser.add_argument('--statistical-analysis', action='store_true', help='Perform statistical analysis on model results')
+    
+    parser.add_argument('--audio-file', type=str, help='Audio file for prediction')
+    parser.add_argument('--audio-dir', type=str, help='Directory containing audio files')
+    parser.add_argument('--model-path', type=str, help='Path to model file')
+    parser.add_argument('--feature-path', type=str, help='Path to feature file')
+    parser.add_argument('--output-dir', type=str, help='Output directory')
+    parser.add_argument('--predictions-file', type=str, help='Predictions file')
+    parser.add_argument('--n-folds', type=int, default=5, help='Number of cross-validation folds')
+    parser.add_argument('--limit', type=int, help='Limit number of files to process')
+    parser.add_argument('--use-gpu', action='store_true', help='Use GPU for training')
+    parser.add_argument('--no-feature-selection', action='store_true', help='Disable feature selection')
+    
+    args = parser.parse_args()
+    
+    # Check environment
     if args.check_env:
         check_environment()
-        
-    if args.check_gpu:
-        check_gpu_capabilities()
-        
-    if args.test_loader:
-        test_cremad_loader(config, limit=args.limit or 5)
-        
+    
+    # Verify project structure
     if args.verify_structure:
         verify_project_structure()
-        
-    if args.process:
-        process_dataset(limit=args.limit, output_path=args.output)
-        
+    
+    # Process dataset
+    if args.process_dataset:
+        process_dataset(limit=args.limit)
+    
+    # Train models
     if args.train:
-        train_models(
-            feature_path=args.feature_path,
-            model_output=args.model_path,
-            use_gpu=config['model']['gpu']['use_gpu'],
-            num_epochs=args.epochs
-        )
-        
+        train_models(feature_path=args.feature_path, model_output=args.output_dir, use_gpu=args.use_gpu)
+    
+    # Evaluate models
     if args.evaluate:
-        evaluate_model(
-            model_path=args.model_path,
-            feature_path=args.feature_path
-        )
-        
+        evaluate_model(model_path=args.model_path, feature_path=args.feature_path)
+    
+    # Develop and evaluate models
     if args.develop_models:
         develop_models(
             feature_path=args.feature_path,
-            model_output_dir=args.model_dir,
-            use_feature_selection=not args.no_feature_selection,
-            tune_hyperparams=not args.no_hyperparameter_tuning
+            model_output_dir=args.output_dir,
+            use_feature_selection=not args.no_feature_selection
         )
-        
+    
+    # Cross-validate models
     if args.cross_validate:
         cross_validate_models(
             feature_path=args.feature_path,
             n_folds=args.n_folds,
-            output_dir=args.result_dir,
+            output_dir=args.output_dir,
             use_feature_selection=not args.no_feature_selection
         )
-        
+    
+    # Predict emotion
     if args.predict:
         if not args.audio_file:
-            logger.error("Audio file must be provided with --audio-file")
+            print("Please specify an audio file with --audio-file")
             return
         
         emotion = predict_emotion(
@@ -1149,35 +1259,45 @@ def main():
         )
         
         if emotion:
-            print(f"\nPredicted emotion: {emotion}\n")
-            
+            print(f"Predicted emotion: {emotion}")
+    
+    # Batch predict emotions
     if args.batch_predict:
         if not args.audio_dir:
-            logger.error("Audio directory must be provided with --audio-dir")
+            print("Please specify an audio directory with --audio-dir")
             return
         
         batch_predict(
             audio_dir=args.audio_dir,
             model_path=args.model_path,
-            output_file=args.output
+            output_file=args.predictions_file
         )
     
-    if args.analyze:
-        analyze_predictions(
-            predictions_file=os.path.join(config['paths']['results'], 'batch_predictions.csv'),
-            output_dir=os.path.join(config['paths']['results'], 'analysis')
-        )
-    
-    # If no specific arguments, run basic verification
-    if not any([args.check_env, args.check_gpu, args.test_loader, args.verify_structure, args.process, 
-                args.train, args.evaluate, args.develop_models, args.cross_validate,
-                args.predict, args.batch_predict, args.analyze]):
-        check_environment()
+    # Check GPU capabilities
+    if args.check_gpu:
         check_gpu_capabilities()
-        test_cremad_loader(config, limit=5)
-        verify_project_structure()
     
-    logger.info("Execution completed successfully")
+    # Analyze predictions
+    if args.analyze_predictions:
+        analyze_predictions(
+            predictions_file=args.predictions_file,
+            output_dir=args.output_dir
+        )
+    
+    # Analyze feature importance
+    if args.analyze_feature_importance:
+        analyze_feature_importance(
+            model_path=args.model_path,
+            output_dir=args.output_dir
+        )
+    
+    # Perform statistical analysis
+    if args.statistical_analysis:
+        from src.statistical_analysis import run_statistical_analysis
+        run_statistical_analysis(
+            cv_results_path=os.path.join(args.output_dir, 'cv_results.pkl') if args.output_dir else None,
+            output_dir=os.path.join(args.output_dir, 'statistical_analysis') if args.output_dir else None
+        )
 
 if __name__ == "__main__":
     main()

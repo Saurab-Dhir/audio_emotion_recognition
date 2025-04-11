@@ -72,7 +72,7 @@ This project will develop an audio-based emotion recognition system focusing on 
 - `README.md` - Project documentation
 - `LICENSE` - License information
 
-### Report Structure (2 pages)
+### Report Structure (6 pages inclusive of diagrams)
 1. **Introduction & Problem Definition**
    - Project motivation
    - Refined problem statement

@@ -1,122 +1,166 @@
-# Audio-Based Emotion Recognition System
+# Audio Emotion Recognition System
 
-This project implements a machine learning pipeline for recognizing emotions from speech audio data. The system analyzes audio samples to classify them into one of eight emotional states.
+An ML-based system for recognizing human emotions from speech audio samples, using acoustic feature extraction and classical machine learning approaches.
 
 ## Project Overview
 
-The audio-based emotion recognition system follows a complete machine learning pipeline:
+This project implements an audio-based emotion recognition system capable of classifying emotional states from speech samples. The system follows a complete machine learning pipeline including:
 
-1. **Data Acquisition**: Using the RAVDESS emotional speech dataset
-2. **Preprocessing**: Noise reduction, normalization, and segmentation
-3. **Feature Extraction**: MFCC, prosodic, and spectral features
-4. **Model Development**: Implementation of SVM, Random Forest, and XGBoost models
-5. **Evaluation**: Comprehensive performance metrics and analysis
+- Data acquisition from the CREMA-D dataset
+- Audio preprocessing (noise reduction, normalization)
+- Feature extraction (MFCC, spectral features, prosodic features)
+- Model training and evaluation (Random Forest, XGBoost)
+- Statistical analysis and interpretation
 
-## Requirements
+## Installation
+
+### Prerequisites
 
 - Python 3.8+
-- Libraries: numpy, pandas, scikit-learn, librosa, matplotlib, etc. (see requirements.txt)
+- Required libraries (install via pip):
+
+```bash
+pip install -r requirements.txt
+```
+
+### Optional GPU Support
+
+For GPU acceleration:
+
+```bash
+# For XGBoost GPU support
+pip install cupy-cuda11x  # Replace 11x with your CUDA version
+
+# For PyTorch GPU support
+pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu116
+```
 
 ## Project Structure
 
 ```
-audio_emotion_recognition/
-├── data/
-│   ├── raw/          # For RAVDESS dataset
-│   ├── processed/    # For preprocessed audio files
-│   └── features/     # For extracted features
-├── notebooks/        # Jupyter notebooks for exploration and visualization
-├── src/              # Source code
-│   ├── preprocessing.py   # Audio preprocessing functions
-│   ├── features.py        # Feature extraction pipeline
-│   ├── models.py          # ML models implementation
-│   ├── evaluation.py      # Evaluation metrics and analysis
-│   └── utils.py           # Utility functions
-├── models/           # Saved model files
-├── results/          # Evaluation results and visualizations
-├── docs/             # Documentation
-├── main.py           # Main script to run the pipeline
-├── config.yaml       # Configuration parameters
-├── requirements.txt  # Dependencies
-└── README.md         # Project documentation
+├── config.yaml           # Configuration settings
+├── data/                 # Data directory
+│   ├── raw/              # Raw audio files
+│   ├── processed/        # Processed audio segments
+│   └── features/         # Extracted feature datasets
+├── docs/                 # Documentation
+├── models/               # Trained model files
+├── notebooks/            # Jupyter notebooks for analysis
+├── results/              # Results and visualizations
+│   ├── analysis/         # Analysis outputs
+│   ├── feature_importance/ # Feature importance visualizations  
+│   └── statistical_analysis/ # Statistical test results
+├── src/                  # Source code
+│   ├── cremad_loader.py  # Data loading utilities
+│   ├── preprocessing.py  # Audio preprocessing
+│   ├── features.py       # Feature extraction
+│   ├── models.py         # ML model implementation
+│   ├── models_gpu.py     # GPU-accelerated models
+│   └── statistical_analysis.py  # Statistical testing
+└── main.py               # Main execution script
 ```
 
-## Getting Started
+## Usage
 
-### 1. Clone the Repository
+### Environment Setup
 
 ```bash
-git clone https://github.com/yourusername/audio_emotion_recognition.git
-cd audio_emotion_recognition
+# Check environment setup
+python main.py --check-env
+
+# Verify project structure
+python main.py --verify-structure
+
+# Check GPU capabilities (optional)
+python main.py --check-gpu
 ```
 
-### 2. Set Up Environment
+### Data Processing
 
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
+# Process audio dataset and extract features
+python main.py --process-dataset
+
+# Limit number of files to process
+python main.py --process-dataset --limit 500
 ```
-
-### 3. Download the RAVDESS Dataset
-
-Download the RAVDESS dataset from [Zenodo](https://zenodo.org/record/1188976) and extract it to the `data/raw/ravdess/` directory.
-
-### 4. Verify Setup
-
-```bash
-python main.py --check-env --verify-structure
-```
-
-### 5. Explore the Dataset
-
-Open and run the Jupyter notebook:
-
-```bash
-jupyter notebook notebooks/01_Data_Exploration.ipynb
-```
-
-## Pipeline Execution
-
-### Preprocessing
-
-The preprocessing module (`src/preprocessing.py`) handles:
-- Noise reduction using spectral gating
-- Amplitude normalization
-- Silence removal
-- Audio segmentation
-
-### Feature Extraction
-
-The feature extraction module (`src/features.py`) extracts:
-- MFCC features (including deltas and delta-deltas)
-- Prosodic features (pitch, energy, speaking rate)
-- Spectral features (centroid, flux, roll-off)
 
 ### Model Training and Evaluation
 
-Run the complete pipeline:
-
 ```bash
-python main.py
+# Cross-validate models
+python main.py --cross-validate --output-dir results
+
+# Develop and evaluate models
+python main.py --develop-models --output-dir results
+
+# Train models with GPU acceleration (if available)
+python main.py --train --use-gpu
 ```
 
-To run specific parts of the pipeline:
+### Prediction
 
 ```bash
-# Process the dataset and extract features
-python main.py --process
+# Predict emotion for a single audio file
+python main.py --predict --audio-file path/to/audio.wav
 
-# Train a neural network model with GPU acceleration 
-python main.py --train --feature-path data/features/cremad_features.pkl
-
-# Evaluate a trained model
-python main.py --evaluate --model-path models/emotion_model.pt
+# Batch predict emotions for audio files in a directory
+python main.py --batch-predict --audio-dir path/to/audio/directory
 ```
 
-### Model Development
+### Analysis
 
-The system provides comprehensive model development capabilities including:
+```bash
+# Analyze prediction results
+python main.py --analyze-predictions --predictions-file results/batch_predictions.csv --output-dir results/analysis
+
+# Analyze feature importance
+python main.py --analyze-feature-importance --model-path models/prediction_pipeline.pkl --output-dir results/feature_importance
+
+# Perform statistical analysis on model results
+python main.py --statistical-analysis --output-dir results
+```
+
+## Model Performance
+
+Based on our statistical analysis, XGBoost significantly outperforms Random Forest on the CREMA-D dataset for emotion recognition:
+
+- XGBoost achieves ~56.5% accuracy (95% CI: 55.8-57.4%)
+- Random Forest achieves ~54.1% accuracy (95% CI: 53.3-55.3%)
+- Statistical significance: p = 0.012 (paired t-test)
+
+The significant difference indicates that XGBoost is consistently better at recognizing emotions from speech, with particular strength in distinguishing between angry, disgust, and sad emotions.
+
+## Feature Importance
+
+The most important features for emotion classification are:
+1. MFCC features (particularly their statistical properties)
+2. Spectral contrast features
+3. Zero crossing rate and spectral bandwidth
+
+These provide insights into which acoustic characteristics best differentiate emotional speech.
+
+## Limitations and Future Work
+
+Current limitations include:
+- Poor discrimination between happy and neutral emotions
+- Over-reliance on MFCC features
+- Limited temporal modeling of emotion changes
+
+Potential improvements:
+- Implement deep learning approaches (CNNs for spectrograms)
+- Add specialized features for commonly confused emotions
+- Develop hierarchical classifiers for similar emotions
+- Implement data augmentation for better class balance
+
+See `docs/limitations_and_improvements.md` for a detailed analysis.
+
+## Documentation
+
+- `docs/statistical_analysis_guide.md`: Guide to statistical analysis functionality
+- `docs/limitations_and_improvements.md`: Detailed analysis of limitations and potential improvements
+
+## License
 
 1. **Feature Selection**: Select the most relevant features using ANOVA F-value or Recursive Feature Elimination
 2. **Machine Learning Models**: Train and compare Random Forest and XGBoost classifiers
