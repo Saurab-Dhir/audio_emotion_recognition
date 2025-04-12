@@ -2,3 +2,5 @@
 /venv
 .cursorignore
 /data/raw
+/wsl_venv
+/src/__pycache__

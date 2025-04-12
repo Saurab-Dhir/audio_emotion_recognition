@@ -1044,7 +1044,7 @@ def analyze_predictions(predictions_file=None, output_dir=None):
     
     return valid_df
 
-def analyze_feature_importance(model_path=None, output_dir=None, top_n=20):
+def analyze_feature_importance(model_path=None, output_dir=None, top_n=20, debug=False):
     """
     Analyze feature importance from the trained model
     
@@ -1052,6 +1052,7 @@ def analyze_feature_importance(model_path=None, output_dir=None, top_n=20):
         model_path (str): Path to the trained model pipeline
         output_dir (str): Directory to save feature importance visualizations
         top_n (int): Number of top features to visualize
+        debug (bool): Whether to enable debug output for feature categorization
     """
     # Load configuration
     config = load_config()
@@ -1067,12 +1068,20 @@ def analyze_feature_importance(model_path=None, output_dir=None, top_n=20):
     
     logger.info(f"Analyzing feature importance from model: {model_path}")
     
+    # Store original logging level
+    original_level = logger.level
+    
+    # If debug is enabled, set logger level to DEBUG
+    if debug:
+        logger.setLevel(logging.DEBUG)
+    
     # Load model pipeline
     try:
         with open(model_path, 'rb') as f:
             pipeline = pickle.load(f)
     except Exception as e:
         logger.error(f"Error loading model pipeline: {e}")
+        logger.setLevel(original_level)  # Reset logging level before returning
         return
     
     # Extract model and feature names
@@ -1106,6 +1115,7 @@ def analyze_feature_importance(model_path=None, output_dir=None, top_n=20):
         })
     else:
         logger.warning(f"Model type {type(model)} doesn't support feature importance extraction")
+        logger.setLevel(original_level)  # Reset logging level before returning
         return
     
     # Sort by importance
@@ -1132,31 +1142,36 @@ def analyze_feature_importance(model_path=None, output_dir=None, top_n=20):
     
     # Group features by type and analyze
     feature_types = {}
+    logger.info(f"Total features for categorization: {len(feature_importance['feature'])}")
+    
     for feature in feature_importance['feature']:
-        if '_mfcc' in feature:
-            feature_type = 'MFCC'
-        elif '_chroma' in feature:
-            feature_type = 'Chroma'
-        elif '_contrast' in feature:
-            feature_type = 'Spectral Contrast'
-        elif '_centroid' in feature:
-            feature_type = 'Spectral Centroid'
-        elif '_bandwidth' in feature:
-            feature_type = 'Spectral Bandwidth'
-        elif '_rolloff' in feature:
-            feature_type = 'Spectral Rolloff'
-        elif '_zcr' in feature:
-            feature_type = 'Zero Crossing Rate'
-        elif '_energy' in feature:
-            feature_type = 'Energy'
-        elif '_rmse' in feature:
-            feature_type = 'RMSE'
+        # First, convert feature name to lowercase for case-insensitive matching
+        feature_lower = feature.lower()
+        
+        # Debug logging to understand feature names
+        logger.debug(f"Categorizing feature: {feature}")
+        
+        # Now check for feature types with more specific matching - using more inclusive patterns
+        if 'mfcc' in feature_lower:
+            feature_type = 'MFCC Features'
+        elif any(term in feature_lower for term in ['spectral', 'centroid', 'bandwidth', 'contrast', 'rolloff', 'flatness']):
+            feature_type = 'Spectral Features'
+        elif any(term in feature_lower for term in ['zcr', 'energy', 'rms', 'zero']):
+            feature_type = 'Prosodic Features'
+        elif 'chroma' in feature_lower:
+            feature_type = 'Chroma Features'
         else:
+            # Log features falling into "Other" category for debugging
+            logger.debug(f"Feature categorized as Other: {feature}")
             feature_type = 'Other'
         
         if feature_type not in feature_types:
             feature_types[feature_type] = 0
         feature_types[feature_type] += feature_importance.loc[feature_importance['feature'] == feature, 'importance'].iloc[0]
+    
+    # Log the resulting feature types and their counts
+    for ft, importance in feature_types.items():
+        logger.info(f"Feature type: {ft}, Total importance: {importance:.4f}")
     
     # Convert to DataFrame for visualization
     feature_type_importance = pd.DataFrame({
@@ -1164,6 +1179,10 @@ def analyze_feature_importance(model_path=None, output_dir=None, top_n=20):
         'importance': list(feature_types.values())
     })
     feature_type_importance = feature_type_importance.sort_values('importance', ascending=False)
+    
+    # Normalize importance values to sum to 1.0
+    total_importance = feature_type_importance['importance'].sum()
+    feature_type_importance['importance'] = feature_type_importance['importance'] / total_importance
     
     # Plot feature type importance
     plt.figure(figsize=(10, 6))
@@ -1175,6 +1194,9 @@ def analyze_feature_importance(model_path=None, output_dir=None, top_n=20):
     plot_path = os.path.join(output_dir, 'feature_type_importance.png')
     plt.savefig(plot_path)
     logger.info(f"Saved feature type importance plot to {plot_path}")
+    
+    # Reset logging level to original
+    logger.setLevel(original_level)
     
     # Return feature importance data
     return feature_importance
@@ -1288,7 +1310,8 @@ def main():
     if args.analyze_feature_importance:
         analyze_feature_importance(
             model_path=args.model_path,
-            output_dir=args.output_dir
+            output_dir=args.output_dir,
+            debug=True  # Enable debug mode
         )
     
     # Perform statistical analysis
