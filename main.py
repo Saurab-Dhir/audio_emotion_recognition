@@ -300,7 +300,7 @@ def evaluate_model(model_path=None, feature_path=None):
     
     return True
 
-def develop_models(feature_path=None, model_output_dir=None, use_feature_selection=True, tune_hyperparams=True):
+def develop_models(feature_path=None, model_output_dir=None, use_feature_selection=True, tune_hyperparams=True, use_gpu=False):
     """
     Develop and evaluate machine learning models
     
@@ -309,6 +309,7 @@ def develop_models(feature_path=None, model_output_dir=None, use_feature_selecti
         model_output_dir (str, optional): Directory to save trained models
         use_feature_selection (bool): Whether to use feature selection
         tune_hyperparams (bool): Whether to tune hyperparameters
+        use_gpu (bool): Whether to use GPU acceleration
     """
     logger.info("Starting model development pipeline...")
     
@@ -320,33 +321,24 @@ def develop_models(feature_path=None, model_output_dir=None, use_feature_selecti
         feature_path = os.path.join(config['paths']['features'], 'cremad_features.pkl')
     
     if model_output_dir is None:
-        model_output_dir = config['paths']['models']
+        model_output_dir = os.path.join(config['paths']['results'], 'model_evaluation')
     
-    # Initialize model trainer
+    # Initialize model trainer with GPU setting
     from src.models import EmotionModelTrainer
-    trainer = EmotionModelTrainer()
+    trainer = EmotionModelTrainer(use_gpu=use_gpu)
     
     # Load feature dataset
     feature_df = trainer.load_feature_dataset(feature_path)
     
-    # Split data into train/validation/test sets
-    # Use 70% for training, 15% for validation, 15% for test
-    target_col = 'emotion'
-    test_size = 0.15
-    val_size = 0.15 / (1 - test_size)  # adjusted to get 15% of original data
-    random_state = config['model'].get('random_state', 42)
+    # Prepare data - using prepare_data from EmotionModelTrainer
+    X_train, X_test, y_train, y_test, _ = trainer.prepare_data(feature_df)
     
-    # First split: training + validation vs test
-    X_train_val, X_test, y_train_val, y_test, feature_names = trainer.prepare_data(
-        feature_df, target_col=target_col, test_size=test_size, random_state=random_state
+    # Split training data to create a validation set
+    X_train_val, X_val, y_train_val, y_val = train_test_split(
+        X_train, y_train, test_size=0.2, random_state=config['model'].get('random_state', 42), stratify=y_train
     )
     
-    # Second split: training vs validation
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_train_val, y_train_val, test_size=val_size, random_state=random_state, stratify=y_train_val
-    )
-    
-    logger.info(f"Training set: {X_train.shape[0]} samples")
+    logger.info(f"Training set: {X_train_val.shape[0]} samples")
     logger.info(f"Validation set: {X_val.shape[0]} samples")
     logger.info(f"Test set: {X_test.shape[0]} samples")
     
@@ -356,7 +348,7 @@ def develop_models(feature_path=None, model_output_dir=None, use_feature_selecti
         k_features = config['model'].get('feature_selection', {}).get('k_features', 100)
         
         X_train, X_test, selected_features = trainer.select_features(
-            X_train, y_train, X_test, method=feature_selection_method, k=k_features
+            X_train_val, y_train_val, X_test, method=feature_selection_method, k=k_features
         )
         
         # Apply the same transformation to validation set
@@ -375,19 +367,14 @@ def develop_models(feature_path=None, model_output_dir=None, use_feature_selecti
     # Train models
     models = {}
     
-    # Get GPU usage setting from config
-    use_gpu = config['model'].get('device', 'cuda').lower() == 'cuda' and config['model'].get('gpu', {}).get('use_gpu', True)
-    logger.info(f"GPU acceleration: {'Enabled' if use_gpu else 'Disabled'}")
-    
     # Train Random Forest model
     logger.info("Training Random Forest model...")
-    rf_model = trainer.train_random_forest(X_train, y_train, X_val, y_val, tune_hyperparams=tune_hyperparams)
+    rf_model = trainer.train_random_forest(X_train_val, y_train_val, X_val, y_val, tune_hyperparams=tune_hyperparams)
     models['random_forest'] = rf_model[0] if isinstance(rf_model, tuple) else rf_model
     
     # Train XGBoost model with GPU if available
     logger.info("Training XGBoost model...")
-    trainer.use_gpu = use_gpu  # Set the use_gpu flag on the trainer object
-    xgb_model = trainer.train_xgboost(X_train, y_train, X_val, y_val, tune_hyperparams=tune_hyperparams)
+    xgb_model = trainer.train_xgboost(X_train_val, y_train_val, X_val, y_val, tune_hyperparams=tune_hyperparams)
     models['xgboost'] = xgb_model[0] if isinstance(xgb_model, tuple) else xgb_model
     
     # Evaluate models on validation set
@@ -1257,7 +1244,8 @@ def main():
         develop_models(
             feature_path=args.feature_path,
             model_output_dir=args.output_dir,
-            use_feature_selection=not args.no_feature_selection
+            use_feature_selection=not args.no_feature_selection,
+            use_gpu=args.use_gpu
         )
     
     # Cross-validate models

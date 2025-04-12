@@ -113,7 +113,7 @@ def reduce_noise_spectral_gating(y: np.ndarray, sr: int, n_fft: int = 2048, hop_
     Returns:
         np.ndarray: Noise-reduced audio
     """
-    # Compute STFT
+    # Compute STFT (Short-Time Fourier Transform)
     D = librosa.stft(y, n_fft=n_fft, hop_length=hop_length)
     
     # Compute magnitude
