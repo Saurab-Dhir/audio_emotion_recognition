@@ -220,7 +220,29 @@ Based on the findings, I recommend several directions for future development:
 
 This project demonstrated successful application of machine learning and signal processing techniques to the challenging domain of emotion recognition from speech, resulting in a system that provides meaningful insights into the relationship between acoustic features and emotional expression.
 
-## 7. Evidence of Team Formation Attempts
+
+## 7. Conclusion
+
+This project successfully developed and evaluated an audio-based emotion recognition system using machine learning techniques. Through comprehensive analysis of acoustic features and rigorous model comparison, we demonstrated that:
+
+1. **XGBoost outperforms Random Forest** with statistical significance (p=0.012) for emotion classification from speech, though the overall performance (57.65% accuracy) indicates the inherent challenge of this task.
+
+2. **MFCC features dominate the importance rankings** (58% of total importance), suggesting these spectral representations capture essential emotional cues in speech signals.
+
+3. **Emotions vary in acoustic distinctiveness**, with anger (78% accuracy) and disgust (72%) being more reliably detected than happy (42%) and neutral (48%) states, revealing fundamental limitations in using purely acoustic features for emotion recognition.
+
+4. **Feature engineering and selection** significantly impact model performance, with our approach reducing dimensionality by 57% while maintaining classification accuracy.
+
+The statistical significance of our model comparison provides evidence for preferring XGBoost in this application domain, but the overall performance limitations offer clear directions for necessary future improvements. The modest results underscore the need for more advanced approaches, such as deep learning methods that can better capture the complex patterns in emotional speech.
+
+The system's current performance makes it unsuitable for most practical applications requiring reliable emotion recognition. For applications requiring higher accuracy, our proposed improvements would need to be implemented, particularly the shift to deep learning architectures that have shown more promise in recent research.
+
+This project contributes to the field by providing a thoroughly documented and statistically validated comparison of traditional machine learning approaches for emotion recognition, establishing a strong baseline for future work while identifying specific limitations that must be addressed.
+
+
+
+
+## 8. Evidence of Team Formation Attempts
 
 As requested in the project requirements, below is evidence of my attempts to form a team for this project:
 
@@ -242,20 +264,4 @@ As requested in the project requirements, below is evidence of my attempts to fo
   </tr>
 </table>
 
-## 8. Conclusion
 
-This project successfully developed and evaluated an audio-based emotion recognition system using machine learning techniques. Through comprehensive analysis of acoustic features and rigorous model comparison, we demonstrated that:
-
-1. **XGBoost outperforms Random Forest** with statistical significance (p=0.012) for emotion classification from speech, though the overall performance (57.65% accuracy) indicates the inherent challenge of this task.
-
-2. **MFCC features dominate the importance rankings** (58% of total importance), suggesting these spectral representations capture essential emotional cues in speech signals.
-
-3. **Emotions vary in acoustic distinctiveness**, with anger (78% accuracy) and disgust (72%) being more reliably detected than happy (42%) and neutral (48%) states, revealing fundamental limitations in using purely acoustic features for emotion recognition.
-
-4. **Feature engineering and selection** significantly impact model performance, with our approach reducing dimensionality by 57% while maintaining classification accuracy.
-
-The statistical significance of our model comparison provides evidence for preferring XGBoost in this application domain, but the overall performance limitations offer clear directions for necessary future improvements. The modest results underscore the need for more advanced approaches, such as deep learning methods that can better capture the complex patterns in emotional speech.
-
-The system's current performance makes it unsuitable for most practical applications requiring reliable emotion recognition. For applications requiring higher accuracy, our proposed improvements would need to be implemented, particularly the shift to deep learning architectures that have shown more promise in recent research.
-
-This project contributes to the field by providing a thoroughly documented and statistically validated comparison of traditional machine learning approaches for emotion recognition, establishing a strong baseline for future work while identifying specific limitations that must be addressed.
